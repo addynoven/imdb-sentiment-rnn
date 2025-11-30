@@ -6,7 +6,7 @@ from tensorflow.keras.models import load_model
 import streamlit as st
 import re
 
-# ---------- PAGE CONFIGURATION ----------
+# ---------- PAGE CONFIG ----------
 st.set_page_config(
     page_title="IMDB Sentiment Analyzer",
     page_icon="🎬",
@@ -16,111 +16,88 @@ st.set_page_config(
 # ---------- CUSTOM CSS ----------
 st.markdown("""
 <style>
-    .stTextArea textarea {
-        font-size: 16px;
-        border-radius: 10px;
-    }
-    .stButton button {
-        background-color: #ff4b4b;
-        color: white;
-        border-radius: 8px;
-        padding: 10px 24px;
-        width: 100%;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 24px;
-    }
+    .stTextArea textarea { font-size: 16px; border-radius: 10px; }
+    .stButton button { background-color: #ff4b4b; color: white; padding: 10px 24px; width: 100%; border-radius: 8px; }
+    div[data-testid="stMetricValue"] { font-size: 24px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- LOAD ASSETS (CACHED) ----------
+# ---------- LOAD ASSETS ----------
 @st.cache_resource
 def load_assets():
     try:
-        # Fix for Attribute Error: compile=False prevents optimizer crashes
+        # compile=False prevents the Python 3.13 optimizer crash
         model = load_model('simple_rnn_imdb.keras', compile=False)
-        
-        # Load Word Index
         word_index = imdb.get_word_index()
         return model, word_index
     except Exception as e:
-        st.error(f"Error loading assets: {e}")
+        st.error(f"Error loading files: {e}")
         return None, None
 
 model, word_index = load_assets()
 
-# ---------- PREPROCESSING FUNCTION (FIXED) ----------
+# ---------- PREPROCESSING (CRITICAL FIXES) ----------
 def preprocess_text(text):
     # 1. Lowercase
     text = text.lower()
     
-    # 2. Remove punctuation (fixes "boring." issue)
+    # 2. Remove punctuation but keep spaces (fixes "boring.")
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     
     words = text.split()
     
-    encoded_review = []
+    # 3. Start with token 1 (<START>) - CRITICAL FOR ACCURACY
+    encoded_review = [1] 
+    
     for word in words:
         if word in word_index:
-            # IMDB indices are offset by 3 (0=pad, 1=start, 2=unknown, 3=unused)
-            # 'the' is index 1 in word_index, but 4 in the model
+            # Shift by 3 (0=PAD, 1=START, 2=UNK, 3=UNUSED)
             idx = word_index[word] + 3
             
-            # Use specific index for Unknown (2) if the word index is too high
-            # (Assuming model trained on top 10,000 words)
+            # Cap at 10,000 (Model input size limit)
+            # If word rank is too rare, treat as Unknown (2)
             if idx >= 10000:
                 encoded_review.append(2)
             else:
                 encoded_review.append(idx)
         else:
-            # If word is completely new, mark as Unknown (2)
+            # Unknown word -> 2
             encoded_review.append(2)
 
-    # Pad the sequence
+    # 4. Pad sequence to length 500
     padded_review = sequence.pad_sequences([encoded_review], maxlen=500)
     return padded_review
 
-# ---------- MAIN INTERFACE ----------
+# ---------- UI & LOGIC ----------
 st.title('🎬 Movie Review Sentiment')
-st.markdown("Type a review below to see if the AI thinks it's **Positive** or **Negative**.")
+st.markdown("Type a review to check if it's **Positive** or **Negative**.")
 
-# Sample buttons
+# Quick test buttons
 col1, col2 = st.columns(2)
 with col1:
-    if st.button("📝 Try Positive Example"):
+    if st.button("😊 Positive Example"):
         st.session_state.review_text = "The movie was absolutely fantastic! The acting was great and the plot was thrilling."
 with col2:
-    if st.button("📝 Try Negative Example"):
-        st.session_state.review_text = "Terrible movie. Complete waste of time and money. The script was boring."
+    if st.button("😡 Negative Example"):
+        st.session_state.review_text = "Really bad don't watch this. Complete waste of time and money."
 
-# Text Area
 if 'review_text' not in st.session_state:
     st.session_state.review_text = ""
 
-user_input = st.text_area(
-    'Write your review here:', 
-    value=st.session_state.review_text,
-    height=150,
-    placeholder="e.g. I really enjoyed this film..."
-)
+user_input = st.text_area("Review Text:", value=st.session_state.review_text, height=150)
 
-# ---------- PREDICTION LOGIC ----------
 if st.button('Analyze Sentiment', type="primary"):
-    
-    if user_input.strip() == "":
-        st.warning("Please enter some text first.")
+    if not user_input.strip():
+        st.warning("Please enter some text.")
     elif model is None:
-        st.error("Model failed to load.")
+        st.error("Model not found.")
     else:
-        with st.spinner('Analyzing...'):
-            # Preprocess
-            preprocessed_input = preprocess_text(user_input)
-            
-            # Predict
-            prediction = model.predict(preprocessed_input)
-            score = prediction[0][0] # Value between 0 and 1
-            
-            # Determine Sentiment
+        with st.spinner('Thinking...'):
+            processed_data = preprocess_text(user_input)
+            prediction = model.predict(processed_data)
+            score = prediction[0][0]
+
+            # Logic: > 0.5 is Positive, < 0.5 is Negative
             if score > 0.5:
                 sentiment = "Positive"
                 emoji = "👍"
@@ -129,27 +106,21 @@ if st.button('Analyze Sentiment', type="primary"):
                 sentiment = "Negative"
                 emoji = "👎"
                 color = "#ff4b4b" # Red
-            
-            # Display Results
+
             st.markdown("---")
-            st.subheader("Analysis Result:")
             
-            res_col1, res_col2 = st.columns([1, 2])
+            # Result Columns
+            c1, c2 = st.columns([1, 2])
             
-            with res_col1:
+            with c1:
                 st.markdown(f"""
-                <div style="background-color: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; text-align: center;">
-                    <h2 style='margin:0; color: {color};'>{emoji} {sentiment}</h2>
-                    <p style='margin:5px 0 0 0; color: grey;'>Score: {score:.4f}</p>
+                <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; text-align: center;">
+                    <h2 style="color: {color}; margin:0;">{emoji} {sentiment}</h2>
+                    <p style="color: gray; margin-top: 5px;">Score: {score:.4f}</p>
                 </div>
                 """, unsafe_allow_html=True)
             
-            with res_col2:
-                st.write("Sentiment Probability:")
+            with c2:
+                st.write("Confidence Meter:")
                 st.progress(float(score))
-                st.caption("0 (Negative) .............................. 1 (Positive)")
-
-# ---------- FOOTER ----------
-st.markdown("---")
-st.markdown("<p style='text-align: center; color: grey;'>Built with TensorFlow & Streamlit</p>", unsafe_allow_html=True)
-
+                st.caption("0 (Negative) ------------------------- 1 (Positive)")
