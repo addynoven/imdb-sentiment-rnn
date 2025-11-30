@@ -1,11 +1,12 @@
-import streamlit as st
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.datasets import imdb
 from tensorflow.keras.preprocessing import sequence
 from tensorflow.keras.models import load_model
+import streamlit as st
+import re
 
-# ---------- PAGE CONFIG ----------
+# ---------- PAGE CONFIGURATION ----------
 st.set_page_config(
     page_title="IMDB Sentiment Analyzer",
     page_icon="🎬",
@@ -24,6 +25,7 @@ st.markdown("""
         color: white;
         border-radius: 8px;
         padding: 10px 24px;
+        width: 100%;
     }
     div[data-testid="stMetricValue"] {
         font-size: 24px;
@@ -32,11 +34,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------- LOAD ASSETS (CACHED) ----------
-# We use cache_resource so we don't reload the model/data on every click
 @st.cache_resource
 def load_assets():
     try:
-        # Load Model
+        # Fix for Attribute Error: compile=False prevents optimizer crashes
         model = load_model('simple_rnn_imdb.keras', compile=False)
         
         # Load Word Index
@@ -48,14 +49,34 @@ def load_assets():
 
 model, word_index = load_assets()
 
-# ---------- PREPROCESSING FUNCTION ----------
+# ---------- PREPROCESSING FUNCTION (FIXED) ----------
 def preprocess_text(text):
-    words = text.lower().split()
-    # IMDB mapping logic: 
-    # Words start at index 1. Index 0 is padding.
-    # Indices 1, 2, 3 are reserved usually for <START>, <OOV>, <UNUSED>
-    # Your logic used +3, which implies standard IMDB offset
-    encoded_review = [word_index.get(word, 2) + 3 for word in words]
+    # 1. Lowercase
+    text = text.lower()
+    
+    # 2. Remove punctuation (fixes "boring." issue)
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    
+    words = text.split()
+    
+    encoded_review = []
+    for word in words:
+        if word in word_index:
+            # IMDB indices are offset by 3 (0=pad, 1=start, 2=unknown, 3=unused)
+            # 'the' is index 1 in word_index, but 4 in the model
+            idx = word_index[word] + 3
+            
+            # Use specific index for Unknown (2) if the word index is too high
+            # (Assuming model trained on top 10,000 words)
+            if idx >= 10000:
+                encoded_review.append(2)
+            else:
+                encoded_review.append(idx)
+        else:
+            # If word is completely new, mark as Unknown (2)
+            encoded_review.append(2)
+
+    # Pad the sequence
     padded_review = sequence.pad_sequences([encoded_review], maxlen=500)
     return padded_review
 
@@ -63,7 +84,7 @@ def preprocess_text(text):
 st.title('🎬 Movie Review Sentiment')
 st.markdown("Type a review below to see if the AI thinks it's **Positive** or **Negative**.")
 
-# Sample buttons to quickly fill text
+# Sample buttons
 col1, col2 = st.columns(2)
 with col1:
     if st.button("📝 Try Positive Example"):
@@ -72,7 +93,7 @@ with col2:
     if st.button("📝 Try Negative Example"):
         st.session_state.review_text = "Terrible movie. Complete waste of time and money. The script was boring."
 
-# Text Area (uses session state to update from buttons)
+# Text Area
 if 'review_text' not in st.session_state:
     st.session_state.review_text = ""
 
@@ -85,10 +106,11 @@ user_input = st.text_area(
 
 # ---------- PREDICTION LOGIC ----------
 if st.button('Analyze Sentiment', type="primary"):
+    
     if user_input.strip() == "":
         st.warning("Please enter some text first.")
     elif model is None:
-        st.error("Model not loaded. Please check your files.")
+        st.error("Model failed to load.")
     else:
         with st.spinner('Analyzing...'):
             # Preprocess
@@ -102,30 +124,31 @@ if st.button('Analyze Sentiment', type="primary"):
             if score > 0.5:
                 sentiment = "Positive"
                 emoji = "👍"
-                color = "green"
+                color = "#2ecc71" # Green
             else:
                 sentiment = "Negative"
                 emoji = "👎"
-                color = "red"
+                color = "#ff4b4b" # Red
             
             # Display Results
             st.markdown("---")
             st.subheader("Analysis Result:")
             
-            # Layout for metrics
             res_col1, res_col2 = st.columns([1, 2])
             
             with res_col1:
-                st.markdown(f"<h2 style='color: {color};'>{emoji} {sentiment}</h2>", unsafe_allow_html=True)
-                st.caption(f"Confidence Score: {score:.4f}")
+                st.markdown(f"""
+                <div style="background-color: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; text-align: center;">
+                    <h2 style='margin:0; color: {color};'>{emoji} {sentiment}</h2>
+                    <p style='margin:5px 0 0 0; color: grey;'>Score: {score:.4f}</p>
+                </div>
+                """, unsafe_allow_html=True)
             
             with res_col2:
                 st.write("Sentiment Probability:")
-                # Progress bar: 0 = Negative (Red), 1 = Positive (Green)
                 st.progress(float(score))
                 st.caption("0 (Negative) .............................. 1 (Positive)")
 
 # ---------- FOOTER ----------
 st.markdown("---")
 st.markdown("<p style='text-align: center; color: grey;'>Built with TensorFlow & Streamlit</p>", unsafe_allow_html=True)
-
