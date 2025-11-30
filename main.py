@@ -152,3 +152,4 @@ if st.button('Analyze Sentiment', type="primary"):
 # ---------- FOOTER ----------
 st.markdown("---")
 st.markdown("<p style='text-align: center; color: grey;'>Built with TensorFlow & Streamlit</p>", unsafe_allow_html=True)
+
