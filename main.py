@@ -37,7 +37,7 @@ st.markdown("""
 def load_assets():
     try:
         # Load Model
-        model = load_model('simple_rnn_imdb.keras')
+        model = load_model('simple_rnn_imdb.keras', compile=False)
         
         # Load Word Index
         word_index = imdb.get_word_index()
@@ -128,3 +128,4 @@ if st.button('Analyze Sentiment', type="primary"):
 # ---------- FOOTER ----------
 st.markdown("---")
 st.markdown("<p style='text-align: center; color: grey;'>Built with TensorFlow & Streamlit</p>", unsafe_allow_html=True)
+
